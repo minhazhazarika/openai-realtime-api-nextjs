@@ -1,71 +1,76 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { OpenAI } from 'openai';
-import { createRealtimeClient } from '@openai/realtime-client-fetch';
 
 export default function Page() {
   const [transcript, setTranscript] = useState<string[]>([]);
-  const sessionRef = useRef<any>(null);
+  const wsRef = useRef<WebSocket>();
+  const sessionIdRef = useRef<string>();
+  const secretRef = useRef<string>();
 
+  // 1) Start /api/session to get session ID + secret
   useEffect(() => {
-    async function init() {
-      try {
-        // 1) Start a new realtime session on your server
-        const res = await fetch('/api/session', { method: 'POST' });
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.json();
+    fetch('/api/session', { method: 'POST' })
+      .then(res => {
+        if (!res.ok) throw new Error(`Status ${res.status}`);
+        return res.json();
+      })
+      .then((data: { id: string; client_secret: string }) => {
+        sessionIdRef.current = data.id;
+        secretRef.current    = data.client_secret;
 
-        // 2) Initialize the OpenAI realtime client
-        const client = new OpenAI({ apiKey: data.client_secret });
-        const rtc = createRealtimeClient({ client });
-        const session = await rtc.createSession({
-          id: data.id,
-          client_secret: data.client_secret,
-        });
+        // 2) Open the realtime WebSocket
+        const ws = new WebSocket(
+          `wss://api.openai.com/v1/realtime/sessions/${data.id}` +
+          `?client_secret=${encodeURIComponent(data.client_secret)}`
+        );
+        wsRef.current = ws;
 
-        // 3) Handle assistant responses
-        session.on('response.created', async ({ response }) => {
-          const msg = response.choices[0].message;
-          if (msg.role !== 'assistant') return;
-          const text = msg.content;
+        ws.onmessage = async (evt) => {
+          const msg = JSON.parse(evt.data);
+          // when GPT replies:
+          if (msg.type === 'response.created') {
+            const assistant = msg.response.choices[0].message;
+            if (assistant.role !== 'assistant') return;
 
-          // Display text in the transcript UI
-          setTranscript((t) => [...t, `Meera: ${text}`]);
+            const text = assistant.content;
+            setTranscript(t => [...t, `Meera: ${text}`]);
 
-          // 4) Fetch ElevenLabs TTS and play it
-          try {
-            const ttsRes = await fetch('/api/tts', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ text }),
-            });
-            if (!ttsRes.ok) throw new Error(await ttsRes.text());
-
-            const mp3 = await ttsRes.blob();
-            const url = URL.createObjectURL(mp3);
-            const audio = new Audio(url);
-            await audio.play();
-            audio.onended = () => URL.revokeObjectURL(url);
-          } catch (e) {
-            console.error('TTS playback error', e);
+            // 3) call ElevenLabs TTS
+            try {
+              const ttsRes = await fetch('/api/tts', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text }),
+              });
+              if (!ttsRes.ok) throw new Error(await ttsRes.text());
+              const mp3 = await ttsRes.blob();
+              const url = URL.createObjectURL(mp3);
+              const audio = new Audio(url);
+              await audio.play();
+              audio.onended = () => URL.revokeObjectURL(url);
+            } catch (e) {
+              console.error('TTS error', e);
+            }
           }
-        });
+        };
 
-        // Save the session instance for start/stop later
-        sessionRef.current = session;
-      } catch (e) {
-        console.error('Session init error', e);
-      }
-    }
-    init();
+        ws.onerror = e => console.error('WebSocket error', e);
+        ws.onclose = () => console.log('WebSocket closed');
+      })
+      .catch(console.error);
   }, []);
 
+  // 4) Hook up Start/Stop buttons
   const handleStart = () => {
-    sessionRef.current?.start().catch(console.error);
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'session.start' }));
   };
   const handleStop = () => {
-    sessionRef.current?.stop().catch(console.error);
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'session.stop' }));
   };
 
   return (
@@ -86,8 +91,8 @@ export default function Page() {
         </button>
       </div>
       <div className="border p-4 h-64 overflow-auto bg-gray-50">
-        {transcript.map((line, idx) => (
-          <div key={idx}>{line}</div>
+        {transcript.map((line, i) => (
+          <div key={i}>{line}</div>
         ))}
       </div>
     </main>
