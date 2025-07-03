@@ -1,102 +1,89 @@
-"use client"
+/* app/page.tsx */
+'use client';
 
-import React, { useEffect, useState } from "react"
-import useWebRTCAudioSession from "@/hooks/use-webrtc"
-import { tools } from "@/lib/tools"
-import { Welcome } from "@/components/welcome"
-import { VoiceSelector } from "@/components/voice-select"
-import { BroadcastButton } from "@/components/broadcast-button"
-import { StatusDisplay } from "@/components/status"
-import { TokenUsageDisplay } from "@/components/token-usage"
-import { MessageControls } from "@/components/message-controls"
-import { ToolsEducation } from "@/components/tools-education"
-import { TextInput } from "@/components/text-input"
-import { motion } from "framer-motion"
-import { useToolsFunctions } from "@/hooks/use-tools"
+import React, { useEffect, useRef, useState } from 'react';
+import { OpenAI } from 'openai';
+import { createRealtimeClient } from '@openai/realtime-client-fetch';
 
-const App: React.FC = () => {
-  // State for voice selection
-  const [voice, setVoice] = useState("ash")
+export default function Page() {
+  const [transcript, setTranscript] = useState<string[]>([]);
+  const [sessionInfo, setSessionInfo] = useState<{ id: string; client_secret: string } | null>(null);
+  const sessionRef = useRef<any>(null);
 
-  // WebRTC Audio Session Hook
-  const {
-    status,
-    isSessionActive,
-    registerFunction,
-    handleStartStopClick,
-    msgs,
-    conversation,
-    sendTextMessage
-  } = useWebRTCAudioSession(voice, tools)
-
-  // Get all tools functions
-  const toolsFunctions = useToolsFunctions();
-
+  // Initialize session on mount
   useEffect(() => {
-    // Register all functions by iterating over the object
-    Object.entries(toolsFunctions).forEach(([name, func]) => {
-      const functionNames: Record<string, string> = {
-        timeFunction: 'getCurrentTime',
-        backgroundFunction: 'changeBackgroundColor',
-        partyFunction: 'partyMode',
-        launchWebsite: 'launchWebsite', 
-        copyToClipboard: 'copyToClipboard',
-        scrapeWebsite: 'scrapeWebsite'
-      };
-      
-      registerFunction(functionNames[name], func);
-    });
-  }, [registerFunction, toolsFunctions])
+    async function initSession() {
+      try {
+        const res = await fetch('/api/session', { method: 'POST' });
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        setSessionInfo({ id: data.id, client_secret: data.client_secret });
+
+        // setup realtime
+        const client = new OpenAI({ apiKey: data.client_secret });
+        const rtc = createRealtimeClient({ client });
+        const session = await rtc.createSession({
+          id: data.id,
+          client_secret: data.client_secret,
+        });
+
+        session.on('response.created', async ({ response }) => {
+          const msg = response.choices[0].message;
+          if (msg.role !== 'assistant') return;
+
+          const text = msg.content;
+          setTranscript((t) => [...t, `Meera: ${text}`]);
+
+          // call TTS
+          try {
+            const ttsRes = await fetch('/api/tts', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text }),
+            });
+            if (!ttsRes.ok) throw new Error(await ttsRes.text());
+
+            const mp3 = await ttsRes.blob();
+            const url = URL.createObjectURL(mp3);
+            const audio = new Audio(url);
+            await audio.play();
+            audio.onended = () => URL.revokeObjectURL(url);
+          } catch (e) {
+            console.error('TTS playback error', e);
+          }
+        });
+
+        sessionRef.current = session;
+      } catch (e) {
+        console.error('Session init error', e);
+      }
+    }
+    initSession();
+  }, []);
+
+  const handleStart = () => {
+    if (sessionRef.current) sessionRef.current.start().catch(console.error);
+  };
+  const handleStop = () => {
+    if (sessionRef.current) sessionRef.current.stop().catch(console.error);
+  };
 
   return (
-    <main className="h-full">
-      <motion.div 
-        className="container flex flex-col items-center justify-center mx-auto max-w-3xl my-20 p-12 border rounded-lg shadow-xl"
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
-      >
-        <Welcome />
-        
-        <motion.div 
-          className="w-full max-w-md bg-card text-card-foreground rounded-xl border shadow-sm p-6 space-y-4"
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ delay: 0.2, duration: 0.4 }}
-        >
-          <VoiceSelector value={voice} onValueChange={setVoice} />
-          
-          <div className="flex flex-col items-center gap-4">
-            <BroadcastButton 
-              isSessionActive={isSessionActive} 
-              onClick={handleStartStopClick}
-            />
-          </div>
-          {msgs.length > 4 && <TokenUsageDisplay messages={msgs} />}
-          {status && (
-            <motion.div 
-              className="w-full flex flex-col gap-2"
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              exit={{ opacity: 0, height: 0 }}
-              transition={{ duration: 0.3 }}
-            >
-              <MessageControls conversation={conversation} msgs={msgs} />
-              <TextInput 
-                onSubmit={sendTextMessage}
-                disabled={!isSessionActive}
-              />
-            </motion.div>
-          )}
-        </motion.div>
-        
-        {status && <StatusDisplay status={status} />}
-        <div className="w-full flex flex-col items-center gap-4">
-          <ToolsEducation />
-        </div>
-      </motion.div>
+    <main className="p-4">
+      <h1 className="text-2xl mb-4">Meera Voice Assistant</h1>
+      <div className="mb-4">
+        <button onClick={handleStart} className="px-4 py-2 bg-green-500 text-white rounded mr-2">
+          Start
+        </button>
+        <button onClick={handleStop} className="px-4 py-2 bg-red-500 text-white rounded">
+          Stop
+        </button>
+      </div>
+      <div className="border p-4 h-64 overflow-auto bg-gray-50">
+        {transcript.map((line, idx) => (
+          <div key={idx}>{line}</div>
+        ))}
+      </div>
     </main>
-  )
+  );
 }
-
-export default App;
