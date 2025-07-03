@@ -1,4 +1,3 @@
-/* app/page.tsx */
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
@@ -7,19 +6,17 @@ import { createRealtimeClient } from '@openai/realtime-client-fetch';
 
 export default function Page() {
   const [transcript, setTranscript] = useState<string[]>([]);
-  const [sessionInfo, setSessionInfo] = useState<{ id: string; client_secret: string } | null>(null);
   const sessionRef = useRef<any>(null);
 
-  // Initialize session on mount
   useEffect(() => {
-    async function initSession() {
+    async function init() {
       try {
+        // 1) Start a new realtime session on your server
         const res = await fetch('/api/session', { method: 'POST' });
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
-        setSessionInfo({ id: data.id, client_secret: data.client_secret });
 
-        // setup realtime
+        // 2) Initialize the OpenAI realtime client
         const client = new OpenAI({ apiKey: data.client_secret });
         const rtc = createRealtimeClient({ client });
         const session = await rtc.createSession({
@@ -27,14 +24,16 @@ export default function Page() {
           client_secret: data.client_secret,
         });
 
+        // 3) Handle assistant responses
         session.on('response.created', async ({ response }) => {
           const msg = response.choices[0].message;
           if (msg.role !== 'assistant') return;
-
           const text = msg.content;
+
+          // Display text in the transcript UI
           setTranscript((t) => [...t, `Meera: ${text}`]);
 
-          // call TTS
+          // 4) Fetch ElevenLabs TTS and play it
           try {
             const ttsRes = await fetch('/api/tts', {
               method: 'POST',
@@ -53,29 +52,36 @@ export default function Page() {
           }
         });
 
+        // Save the session instance for start/stop later
         sessionRef.current = session;
       } catch (e) {
         console.error('Session init error', e);
       }
     }
-    initSession();
+    init();
   }, []);
 
   const handleStart = () => {
-    if (sessionRef.current) sessionRef.current.start().catch(console.error);
+    sessionRef.current?.start().catch(console.error);
   };
   const handleStop = () => {
-    if (sessionRef.current) sessionRef.current.stop().catch(console.error);
+    sessionRef.current?.stop().catch(console.error);
   };
 
   return (
     <main className="p-4">
       <h1 className="text-2xl mb-4">Meera Voice Assistant</h1>
       <div className="mb-4">
-        <button onClick={handleStart} className="px-4 py-2 bg-green-500 text-white rounded mr-2">
+        <button
+          onClick={handleStart}
+          className="bg-green-500 text-white px-4 py-2 rounded mr-2"
+        >
           Start
         </button>
-        <button onClick={handleStop} className="px-4 py-2 bg-red-500 text-white rounded">
+        <button
+          onClick={handleStop}
+          className="bg-red-500 text-white px-4 py-2 rounded"
+        >
           Stop
         </button>
       </div>
