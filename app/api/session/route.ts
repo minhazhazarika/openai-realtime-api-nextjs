@@ -4,7 +4,7 @@ import { meeraSystemPrompt } from '@/lib/prompt';
 export async function POST() {
   try {
     if (!process.env.OPENAI_API_KEY) {
-      throw new Error(`OPENAI_API_KEY is not set`);
+      throw new Error('OPENAI_API_KEY is not set');
     }
 
     const response = await fetch(
@@ -19,6 +19,7 @@ export async function POST() {
           model: 'gpt-4o-realtime-preview-2024-12-17',
           voice: 'alloy',
           modalities: ['audio', 'text'],
+          // **Replace the old instructions with our natural‐language prompt**
           instructions: meeraSystemPrompt,
           tool_choice: 'auto',
         }),
@@ -27,15 +28,15 @@ export async function POST() {
 
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(`API request failed: ${response.status} – ${text}`);
+      throw new Error(`Session creation failed: ${response.status} – ${text}`);
     }
 
     const data = await response.json();
     return NextResponse.json(data);
   } catch (error) {
-    console.error('Error fetching session data:', error);
+    console.error('Error creating realtime session:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch session data' },
+      { error: 'Failed to create realtime session' },
       { status: 500 }
     );
   }
