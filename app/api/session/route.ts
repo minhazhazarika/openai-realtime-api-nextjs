@@ -54,7 +54,7 @@ export async function POST(req: Request) {
       { role: 'user',      content: userText },
       { role: 'assistant', content: aiReply }
     );
-    sessionStore[sessionId] = memory.slice(-20);
+    sessionStore[sessionId] = memory.slice(-10);
 
     // Return the session data plus the sessionId so the client can keep using it
     return NextResponse.json({ ...data, sessionId });
