@@ -1,7 +1,8 @@
+// app/api/session/route.ts
 import { NextResponse } from 'next/server';
 import { meeraSystemPrompt } from '@/lib/prompt';
 
-// In-memory store (resets when the function cold-boots, but good enough for an MVP)
+// In-memory store for up to 10 turns per session
 const sessionStore: Record<string, { role: string; content: string }[]> = {};
 
 export async function POST(req: Request) {
@@ -11,18 +12,9 @@ export async function POST(req: Request) {
     }
 
     const { sessionId, userText } = await req.json();
-
-    // Pull or initialize memory for this session
     const memory = sessionStore[sessionId] || [];
 
-    // Build the messages array: system → memory → user
-    const messages = [
-      { role: 'system', content: meeraSystemPrompt },
-      ...memory,
-      { role: 'user',   content: userText }
-    ];
-
-    // Create the realtime session
+    // Create the session, including persona + memory
     const response = await fetch(
       'https://api.openai.com/v1/realtime/sessions',
       {
@@ -35,33 +27,38 @@ export async function POST(req: Request) {
           model: 'gpt-4o-realtime-preview-2024-12-17',
           voice: 'alloy',
           modalities: ['audio', 'text'],
-          instructions: JSON.stringify({ messages }), // embed full chat context
+
+          // 1) instructions must be a string
+          instructions: meeraSystemPrompt,
+
+          // 2) include prior turns as an array of {role,content}
+          include: memory,
+
           tool_choice: 'auto',
         }),
       }
     );
-
     if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Session creation failed: ${response.status} – ${text}`);
+      const errText = await response.text();
+      throw new Error(`Session API error ${response.status}: ${errText}`);
     }
 
     const data = await response.json();
 
-    // --- Update memory: push user + assistant then trim to last 10 ---
-    const aiReply = data.initial_message?.content ?? '';
+    // Save the very first assistant message (if present)
+    const firstReply = data.initial_message?.content ?? '';
     memory.push(
-      { role: 'user',      content: userText },
-      { role: 'assistant', content: aiReply }
+      { role: 'user', content: userText },
+      { role: 'assistant', content: firstReply }
     );
     sessionStore[sessionId] = memory.slice(-10);
 
-    // Return the session data plus the sessionId so the client can keep using it
+    // Return the session info + sessionId so client can reuse
     return NextResponse.json({ ...data, sessionId });
-  } catch (err) {
-    console.error('Error in session route:', err);
+  } catch (err: any) {
+    console.error('Session route error:', err);
     return NextResponse.json(
-      { error: 'Failed to create session' },
+      { error: err.message || 'Unknown error' },
       { status: 500 }
     );
   }
