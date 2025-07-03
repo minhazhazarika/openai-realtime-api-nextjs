@@ -27,17 +27,13 @@ export async function POST(req: Request) {
           model: 'gpt-4o-realtime-preview-2024-12-17',
           voice: 'alloy',
           modalities: ['audio', 'text'],
-
-          // 1) instructions must be a string
           instructions: meeraSystemPrompt,
-
-          // 2) include prior turns as an array of {role,content}
           include: memory,
-
           tool_choice: 'auto',
         }),
       }
     );
+
     if (!response.ok) {
       const errText = await response.text();
       throw new Error(`Session API error ${response.status}: ${errText}`);
@@ -55,10 +51,12 @@ export async function POST(req: Request) {
 
     // Return the session info + sessionId so client can reuse
     return NextResponse.json({ ...data, sessionId });
-  } catch (err: any) {
-    console.error('Session route error:', err);
+  } catch (error) {
+    // Narrow the error to extract a message
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('Session route error:', message);
     return NextResponse.json(
-      { error: err.message || 'Unknown error' },
+      { error: message },
       { status: 500 }
     );
   }
