@@ -20,7 +20,7 @@ export async function POST() {
         body: JSON.stringify({
           model: 'gpt-4o-realtime-preview-2024-12-17',
           voice: 'alloy',
-          modalities: ['audio', 'text'],
+          modalities: ['text'],
           instructions: meeraSystemPrompt,
           tool_choice: 'auto',
         }),
